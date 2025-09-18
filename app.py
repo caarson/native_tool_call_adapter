@@ -5,7 +5,11 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi import APIRouter
+
+from config import get_config, update_config
 
 from parser_control import (
     Parser,
@@ -16,20 +20,74 @@ from regex_replacement import (
     apply_replacement_to_prompt,
 )
 
-app = FastAPI(title="Native Tool Call Adapter for Cline/Roo-Code")
+app = FastAPI(title="Native Tool Call Adapter for Cline/Roo-Code + GUI")
 
-TARGET_BASE_URL = os.getenv("TARGET_BASE_URL", "https://api.openai.com/v1")
+# Mount static files (will add index.html later)
+if os.path.isdir("web/static"):
+    app.mount("/static", StaticFiles(directory="web/static"), name="static")
 
-MESSAGE_DUMP_PATH = os.getenv("MESSAGE_DUMP_PATH")
-TOOL_DUMP_PATH = os.getenv("TOOL_DUMP_PATH")
-DISABLE_STRICT_SCHEMAS = bool(os.getenv("DISABLE_STRICT_SCHEMAS"))
-FORCE_TOOL_CALLING = bool(os.getenv("FORCE_TOOL_CALLING"))
+api_router = APIRouter(prefix="/api")
+
+
+@api_router.get("/config")
+async def api_get_config():
+    return get_config().model_dump()
+
+
+@api_router.post("/config")
+async def api_update_config(payload: dict):
+    cfg = update_config(payload)
+    return cfg.model_dump()
+
+
+@api_router.post("/parse-tools")
+async def api_parse_tools(payload: dict):
+    """Given a system prompt (and optional flag disable_strict), return processed prompt + schemas.
+    Expects: {"system_prompt": str, "strict": bool|null}
+    """
+    system_prompt = payload.get("system_prompt") or ""
+    strict_flag = payload.get("strict")
+    if strict_flag is None:
+        strict_flag = not get_config().disable_strict_schemas
+    parser, new_prompt = build_tool_parser(system_prompt, strict_flag)
+    return {"processed_system_prompt": new_prompt, "schemas": parser.schemas}
+
+
+@api_router.get("/test-upstream")
+async def api_test_upstream():
+    import time
+    cfg = get_config()
+    t0 = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{cfg.target_base_url}/models")
+            latency = (time.perf_counter() - t0) * 1000
+            return {
+                "ok": r.status_code < 400,
+                "status_code": r.status_code,
+                "latency_ms": round(latency, 2),
+            }
+    except Exception as e:
+        latency = (time.perf_counter() - t0) * 1000
+        return {"ok": False, "error": str(e), "latency_ms": round(latency, 2)}
+
+app.include_router(api_router)
+
+
+@app.get("/ui")
+async def ui_index():
+    try:
+        with open("web/static/index.html", "r", encoding="utf-8") as f:
+            return HTMLResponse(f.read())
+    except FileNotFoundError:
+        return HTMLResponse("<h1>GUI not found</h1>", status_code=404)
 
 
 def process_request(
     request: dict[str, Any],
 ) -> tuple[dict[str, Any], Parser, Callable[[str], str]]:
     request = copy.deepcopy(request)
+    cfg = get_config()
     if request["messages"] and request["messages"][0]["role"] in ["system", "user"]:
         system_prompt = request["messages"][0]["content"]
         if isinstance(system_prompt, list):
@@ -41,13 +99,13 @@ def process_request(
                 ]
             )
         parser, processed_system_prompt = build_tool_parser(
-            system_prompt, not DISABLE_STRICT_SCHEMAS
+            system_prompt, not cfg.disable_strict_schemas
         )
         request["messages"][0]["role"] = "system"
         request["messages"][0]["content"] = processed_system_prompt
         if parser.schemas:
             request["tools"] = (request.get("tools") or []) + parser.schemas
-        if FORCE_TOOL_CALLING and request.get("tools"):
+        if cfg.force_tool_calling and request.get("tools"):
             request["tool_choice"] = "required"
 
     messages = parser.modify_xml_messages_to_tool_calls(request["messages"])
@@ -55,11 +113,11 @@ def process_request(
         apply_replacement_to_messages(messages)
     )
 
-    if MESSAGE_DUMP_PATH:
-        with open(MESSAGE_DUMP_PATH, "w", encoding="utf-8") as f:
+    if cfg.message_dump_path:
+        with open(cfg.message_dump_path, "w", encoding="utf-8") as f:
             json.dump(request["messages"], f, ensure_ascii=False, indent=2)
-    if TOOL_DUMP_PATH:
-        with open(TOOL_DUMP_PATH, "w", encoding="utf-8") as f:
+    if cfg.tool_dump_path:
+        with open(cfg.tool_dump_path, "w", encoding="utf-8") as f:
             json.dump((request.get("tools") or "[]"), f, ensure_ascii=False, indent=2)
 
     return request, parser, apply_replacement_to_completion
@@ -159,7 +217,7 @@ async def create_completion(request: Request):
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream(
                     "POST",
-                    f"{TARGET_BASE_URL}/chat/completions",
+                    f"{get_config().target_base_url}/chat/completions",
                     json=modified_request,
                     headers=headers,
                     params=request.query_params,
@@ -176,7 +234,7 @@ async def create_completion(request: Request):
     else:
         async with httpx.AsyncClient(timeout=None) as client:
             r = await client.post(
-                f"{TARGET_BASE_URL}/chat/completions",
+                f"{get_config().target_base_url}/chat/completions",
                 json=modified_request,
                 headers=headers,
                 params=request.query_params,
@@ -198,9 +256,15 @@ async def get_models(request: Request):
         del headers["content-length"]
     async with httpx.AsyncClient(timeout=None) as client:
         r = await client.get(
-            f"{TARGET_BASE_URL}/models", headers=headers, params=request.query_params
+            f"{get_config().target_base_url}/models", headers=headers, params=request.query_params
         )
         return JSONResponse(status_code=r.status_code, content=r.json())
+
+
+# Legacy/alternate path some clients request
+@app.get("/api/v0/models")
+async def get_models_v0(request: Request):
+    return await get_models(request)
 
 
 async def handle_stream_response_for_legacy_completion(
@@ -256,8 +320,9 @@ async def create_legacy_completion(request: Request):
     req["prompt"], apply_replacement_to_completion = apply_replacement_to_prompt(
         req["prompt"]
     )
-    if MESSAGE_DUMP_PATH:
-        with open(MESSAGE_DUMP_PATH, "w", encoding="utf-8") as f:
+    cfg = get_config()
+    if cfg.message_dump_path:
+        with open(cfg.message_dump_path, "w", encoding="utf-8") as f:
             f.write(req["prompt"])
 
     headers = dict(request.headers)
@@ -272,7 +337,7 @@ async def create_legacy_completion(request: Request):
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream(
                     "POST",
-                    f"{TARGET_BASE_URL}/completions",
+                    f"{get_config().target_base_url}/completions",
                     json=req,
                     headers=headers,
                     params=request.query_params,
@@ -286,7 +351,7 @@ async def create_legacy_completion(request: Request):
     else:
         async with httpx.AsyncClient(timeout=None) as client:
             r = await client.post(
-                f"{TARGET_BASE_URL}/completions",
+                f"{get_config().target_base_url}/completions",
                 json=req,
                 headers=headers,
                 params=request.query_params,

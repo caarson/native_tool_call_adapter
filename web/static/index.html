@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Native Tool Call Adapter GUI</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header>
+  <h1>Native Tool Call Adapter GUI</h1>
+  <nav>
+    <button class="tab-button active" data-tab="chat">Chat</button>
+    <button class="tab-button" data-tab="tools">Tools</button>
+    <button class="tab-button" data-tab="config">Config</button>
+    <button class="tab-button" data-tab="logs">Logs</button>
+  </nav>
+  <form id="upstreamForm" class="upstream-form">
+    <label>Upstream URL <input type="text" id="headerTargetBase" placeholder="https://api.openai.com/v1" /></label>
+    <button type="submit">Apply</button>
+    <button type="button" id="testUpstream">Test</button>
+    <span id="upstreamStatus" class="status-text"></span>
+  </form>
+</header>
+<main>
+  <section id="chat" class="tab active">
+    <div class="left-pane">
+      <h2>System Prompt</h2>
+      <textarea id="systemPrompt" placeholder="Paste Cline/Roo-Code system prompt here"></textarea>
+      <div class="inline">
+        <button id="parseToolsBtn">Parse Tools</button>
+        <label><input type="checkbox" id="strictMode" checked /> Strict</label>
+      </div>
+      <h3>Parsed Schemas</h3>
+      <pre id="schemasDisplay" class="scroll"></pre>
+      <h3>Processed System Prompt</h3>
+      <pre id="processedPrompt" class="scroll"></pre>
+  <h3>Available Models</h3>
+  <pre id="modelsDisplay" class="scroll"></pre>
+    </div>
+    <div class="right-pane">
+      <div id="messages" class="messages"></div>
+      <form id="messageForm">
+        <select id="roleSelect">
+          <option value="user">user</option>
+          <option value="system">system</option>
+          <option value="assistant">assistant (manual)</option>
+        </select>
+        <textarea id="messageInput" placeholder="Type a message"></textarea>
+        <div class="inline">
+          <label><input type="checkbox" id="streamToggle" checked /> Stream</label>
+          <button type="submit">Send</button>
+          <button type="button" id="resetChat">Reset</button>
+        </div>
+      </form>
+    </div>
+  </section>
+  <section id="tools" class="tab">
+    <h2>Tool Call Extraction Preview</h2>
+    <p>Shows last assistant raw + converted XML/tool_calls mapping.</p>
+    <div id="toolCallPreview" class="panel"></div>
+  </section>
+  <section id="config" class="tab">
+    <h2>Runtime Configuration</h2>
+    <form id="configForm">
+      <label>Target Base URL <input type="text" id="cfgTargetBase" /></label>
+      <label>Message Dump Path <input type="text" id="cfgMsgDump" /></label>
+      <label>Tool Dump Path <input type="text" id="cfgToolDump" /></label>
+      <label><input type="checkbox" id="cfgDisableStrict" /> Disable Strict Schemas</label>
+      <label><input type="checkbox" id="cfgForceTool" /> Force Tool Calling</label>
+      <button type="submit">Save Config</button>
+    </form>
+    <pre id="configStatus" class="panel"></pre>
+  </section>
+  <section id="logs" class="tab">
+    <h2>Event Log</h2>
+    <pre id="eventLog" class="panel"></pre>
+  </section>
+</main>
+<footer>
+  <span>Shim server rerouting OpenAI-compatible traffic. GUI experimental.</span>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -49,6 +49,36 @@ Parsing depends on the content of Cline/Roo-Code prompts, so it may stop working
    - Base URL: http://localhost:8000/v1
    - API Key: Setting the API key will automatically use it when communicating with TARGET_BASE_URL.
 
+### Optional: Use the Built‑in GUI
+This project now includes an experimental web GUI that lets you:
+ - Paste and parse the original Cline/Roo-Code system prompt
+ - Inspect generated tool schemas and processed system prompt
+ - Configure runtime shim settings live (target base URL, strict mode, forced tool calls, dump paths)
+ - Run chat completions (streaming or non-streaming) through the adapter
+ - View raw tool call JSON / XML conversion preview
+
+Steps:
+1. Start the server (see steps above).  
+2. Open: `http://localhost:8000/ui` in your browser.  
+3. Paste the full Cline/Roo-Code system prompt into the System Prompt box and click `Parse Tools` to preview schemas.  
+4. Add chat messages on the right pane and send; the adapter will forward to the configured `TARGET_BASE_URL` and display responses (including streaming).  
+5. Adjust config under the Config tab; changes take effect immediately for new requests.
+
+Notes:
+- The adapter still functions as a transparent OpenAI-compatible shim at `/v1/*` endpoints; the GUI is optional.
+- Streaming is implemented using the browser ReadableStream over the SSE format returned by the upstream model.
+- If you deploy behind a proxy, ensure SSE (Server-Sent Events) is not buffered so streaming remains responsive.
+
+#### Quick Upstream Control Bar
+At the top of the GUI you can now:
+- Enter a new upstream (Target Base URL) and click Apply to immediately re-route subsequent requests.
+- Click Test to perform a `/models` probe; the status and latency are displayed inline.
+This avoids needing environment restarts for rapid model endpoint switching.
+
+### Compatibility
+Some clients may query `GET /api/v0/models`. A compatibility route now proxies this to the upstream `/models` endpoint so legacy tooling does not 404.
+
+
 
 ## Settings
 The following settings can be configured as environment variables
